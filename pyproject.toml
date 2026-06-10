@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projmap"
+version = "0.1.0"
+description = "Zero-config project memory for Claude Code - cuts token usage 5-10x"
+requires-python = ">=3.10"
+dependencies = ["mcp>=1.0"]
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "O'ktam Ziyodullayev"}]
+keywords = ["claude", "claude-code", "mcp", "token-optimization", "context"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/ZiyoVer/projmap"
+Issues = "https://github.com/ZiyoVer/projmap/issues"
+
+[project.scripts]
+projmap = "projmap.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
