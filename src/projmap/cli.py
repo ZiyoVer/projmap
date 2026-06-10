@@ -1,29 +1,33 @@
-"""projmap CLI - zero-config o'rnatish.
+"""projmap CLI — zero-config setup.
 
-Developer faqat ikkita narsani biladi:
+A developer only needs to know two things:
   pip install projmap
-  projmap init        (repo ichida, bitta marta)
+  projmap init        (inside the repo, once)
 
-Qolgan hammasi avtomatik: .mcp.json, CLAUDE.md qoidalari, .gitignore.
+Everything else is automatic: .mcp.json, CLAUDE.md rules, .gitignore.
 """
+import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
+from projmap import __version__, core
+
 CLAUDE_RULES = """
-## projmap (avtomatik qo'shilgan)
-- Sessiya boshida fayllarni ochishdan OLDIN projmap_get_map toolini chaqir.
-- "X funksiya/klass qayerda" savoli uchun projmap_find_symbol ishlatiladi.
-- Fayl mazmunini bilish uchun avval projmap_file_skeleton; to'liq ochish faqat tahrir uchun.
-- Faylni o'zgartirgandan keyin map avtomatik yangilanadi, qayta chaqirish shart emas.
+## projmap rules (auto-generated)
+- At session start, call the projmap_get_map tool BEFORE opening any files.
+- For "where is function/class X" questions, use projmap_find_symbol.
+- To learn what a file contains, try projmap_file_skeleton first; open the
+  full file only when you need to edit it.
+- The map refreshes itself after edits — no need to re-trigger anything.
 """
 
-MARKER = "## projmap (avtomatik qo'shilgan)"
+MARKER = "## projmap rules (auto-generated)"
+LEGACY_MARKER = "## projmap (avtomatik qo'shilgan)"
 
 
 def _find_repo_root() -> Path:
-    """Joriy papkadan yuqoriga .git qidiradi; topilmasa joriy papka."""
+    """Walk upward looking for .git; fall back to the current directory."""
     p = Path.cwd()
     for parent in [p, *p.parents]:
         if (parent / ".git").exists():
@@ -31,21 +35,20 @@ def _find_repo_root() -> Path:
     return p
 
 
-def cmd_init() -> int:
+def cmd_init(_args) -> int:
     root = _find_repo_root()
-    py_files = [f for f in root.rglob("*.py") if "__pycache__" not in str(f)][:1]
-    if not py_files:
-        print(f"[projmap] Ogohlantirish: {root} ichida .py fayl topilmadi. "
-              "Python repo ildizida ishga tushir.")
+    if next(core.iter_source_files(root), None) is None:
+        print(f"[projmap] Warning: no Python or JS/TS files found under {root}. "
+              "Run this from your project root.")
 
-    # 1. .mcp.json (mavjud bo'lsa, projmap'ni qo'shadi, boshqalarini buzmaydi)
+    # 1. .mcp.json (adds projmap, leaves existing servers untouched)
     mcp_path = root / ".mcp.json"
     cfg = {}
     if mcp_path.exists():
         try:
             cfg = json.loads(mcp_path.read_text())
         except json.JSONDecodeError:
-            print(f"[projmap] XATO: {mcp_path} buzilgan JSON. Qo'lda tuzat va qayta urin.")
+            print(f"[projmap] ERROR: {mcp_path} is broken JSON. Fix it and retry.")
             return 1
     cfg.setdefault("mcpServers", {})
     cfg["mcpServers"]["projmap"] = {
@@ -53,71 +56,107 @@ def cmd_init() -> int:
         "args": ["-m", "projmap.server", str(root)],
     }
     mcp_path.write_text(json.dumps(cfg, indent=2))
-    print(f"[projmap] OK  .mcp.json -> projmap serveri qo'shildi")
+    print("[projmap] OK  .mcp.json -> projmap server registered")
 
-    # 2. CLAUDE.md qoidalari (idempotent: ikki marta qo'shilmaydi)
+    # 2. CLAUDE.md rules (idempotent: never appended twice)
     claude_md = root / "CLAUDE.md"
     existing = claude_md.read_text() if claude_md.exists() else ""
-    if MARKER not in existing:
+    if MARKER not in existing and LEGACY_MARKER not in existing:
         claude_md.write_text(existing.rstrip() + "\n" + CLAUDE_RULES)
-        print(f"[projmap] OK  CLAUDE.md -> kontekst qoidalari qo'shildi")
+        print("[projmap] OK  CLAUDE.md -> context rules appended")
     else:
-        print(f"[projmap] OK  CLAUDE.md -> qoidalar allaqachon mavjud")
+        print("[projmap] OK  CLAUDE.md -> rules already present")
 
-    # 3. .gitignore'ga kesh fayli
+    # 3. .gitignore entry for the cache file
     gi = root / ".gitignore"
     gi_text = gi.read_text() if gi.exists() else ""
-    if ".projmap_cache.json" not in gi_text:
-        gi.write_text(gi_text.rstrip() + "\n.projmap_cache.json\n")
-        print(f"[projmap] OK  .gitignore -> kesh fayli qo'shildi")
+    if core.CACHE_NAME not in gi_text:
+        gi.write_text(gi_text.rstrip() + f"\n{core.CACHE_NAME}\n")
+        print("[projmap] OK  .gitignore -> cache file ignored")
 
-    print("\n[projmap] Tayyor! Endi shu repo'da `claude` ni ishga tushir — "
-          "Fable toollarni avtomatik ko'radi.\n"
-          "Tekshirish: claude ichida `/mcp` buyrug'i projmap'ni ko'rsatishi kerak.")
+    print("\n[projmap] Done! Start `claude` in this repo — the tools are picked "
+          "up automatically.\nVerify: the `/mcp` command inside claude should "
+          "list projmap.")
     return 0
 
 
-def cmd_status() -> int:
+def cmd_status(_args) -> int:
     root = _find_repo_root()
     mcp = root / ".mcp.json"
     ok_mcp = mcp.exists() and "projmap" in mcp.read_text()
     claude_md = root / "CLAUDE.md"
-    ok_rules = claude_md.exists() and MARKER in claude_md.read_text()
-    cache = root / ".projmap_cache.json"
-    n = len(json.loads(cache.read_text())) if cache.exists() else 0
+    ok_rules = claude_md.exists() and (
+        MARKER in claude_md.read_text() or LEGACY_MARKER in claude_md.read_text())
+    cache = root / core.CACHE_NAME
+    n = 0
+    if cache.exists():
+        try:
+            data = json.loads(cache.read_text())
+            n = len(data.get("files", data))
+        except json.JSONDecodeError:
+            pass
     print(f"repo:      {root}")
-    print(f".mcp.json: {'OK' if ok_mcp else 'YO`Q - projmap init ishga tushir'}")
-    print(f"CLAUDE.md: {'OK' if ok_rules else 'YO`Q - projmap init ishga tushir'}")
-    print(f"kesh:      {n} fayl indekslangan")
+    print(f".mcp.json: {'OK' if ok_mcp else 'MISSING - run projmap init'}")
+    print(f"CLAUDE.md: {'OK' if ok_rules else 'MISSING - run projmap init'}")
+    print(f"cache:     {n} files indexed")
     return 0
 
 
-def cmd_uninstall() -> int:
+def cmd_uninstall(_args) -> int:
     root = _find_repo_root()
     mcp_path = root / ".mcp.json"
     if mcp_path.exists():
-        cfg = json.loads(mcp_path.read_text())
-        cfg.get("mcpServers", {}).pop("projmap", None)
-        mcp_path.write_text(json.dumps(cfg, indent=2))
+        try:
+            cfg = json.loads(mcp_path.read_text())
+        except json.JSONDecodeError:
+            cfg = None
+        if cfg is not None:
+            cfg.get("mcpServers", {}).pop("projmap", None)
+            mcp_path.write_text(json.dumps(cfg, indent=2))
     claude_md = root / "CLAUDE.md"
-    if claude_md.exists() and MARKER in claude_md.read_text():
+    if claude_md.exists():
         text = claude_md.read_text()
-        claude_md.write_text(text.split(MARKER)[0].rstrip() + "\n")
-    (root / ".projmap_cache.json").unlink(missing_ok=True)
-    print("[projmap] Olib tashlandi.")
+        for marker in (MARKER, LEGACY_MARKER):
+            if marker in text:
+                text = text.split(marker)[0].rstrip() + "\n"
+        claude_md.write_text(text)
+    (root / core.CACHE_NAME).unlink(missing_ok=True)
+    print("[projmap] Removed.")
     return 0
 
 
-def main() -> int:
-    cmds = {"init": cmd_init, "status": cmd_status, "uninstall": cmd_uninstall}
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "init"
-    if cmd not in cmds:
-        print("projmap [init|status|uninstall]\n"
-              "  init      - repo'ni sozlash (default, bitta marta)\n"
-              "  status    - holatni tekshirish\n"
-              "  uninstall - olib tashlash")
-        return 1
-    return cmds[cmd]()
+def cmd_map(_args) -> int:
+    """Print the compressed project map to stdout (works with any tool)."""
+    print(core.build_map(_find_repo_root()))
+    return 0
+
+
+def cmd_find(args) -> int:
+    """Find a symbol from the terminal: projmap find my_function"""
+    print(core.find_symbol(_find_repo_root(), args.name))
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="projmap",
+        description="Zero-config project memory for Claude Code — "
+                    "compressed codebase maps that cut token usage 5-10x.",
+    )
+    parser.add_argument("--version", action="version", version=f"projmap {__version__}")
+    sub = parser.add_subparsers(dest="command")
+    sub.add_parser("init", help="set up this repo (default, run once)").set_defaults(func=cmd_init)
+    sub.add_parser("status", help="check setup and index state").set_defaults(func=cmd_status)
+    sub.add_parser("uninstall", help="cleanly remove all changes").set_defaults(func=cmd_uninstall)
+    sub.add_parser("map", help="print the compressed project map to stdout").set_defaults(func=cmd_map)
+    p_find = sub.add_parser("find", help="find where a symbol is defined")
+    p_find.add_argument("name", help="function/class/constant name (partial match)")
+    p_find.set_defaults(func=cmd_find)
+
+    args = parser.parse_args(argv)
+    if args.command is None:
+        return cmd_init(args)
+    return args.func(args)
 
 
 if __name__ == "__main__":

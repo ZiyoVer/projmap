@@ -4,4 +4,7 @@ dist/
 build/
 *.egg-info/
 .projmap_cache.json
+.projmap_cache.json.tmp
 .venv/
+.langforge/
+.pytest_cache/
