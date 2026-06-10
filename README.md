@@ -113,6 +113,13 @@ Everything else — function bodies — is dropped. That's where the compression
 
 ## Performance
 
+![Measured token usage: full file reads vs projmap](docs/benchmark.png)
+
+Measured on a real 35-file Python repo with the `cl100k` tokenizer: understanding
+the whole project drops from ~70k to ~8k tokens, and typical "where is X?" /
+"what's in this file?" questions are answered for ~700-800 tokens instead of
+opening 5-6k-token files.
+
 The index refreshes lazily on every tool call. Files are `stat()`'d and only re-parsed when mtime/size changed — unchanged files are never even opened. Vendored directories (`node_modules`, `.venv`, `build`, …) are pruned before traversal, and minified bundles are skipped.
 
 Measured on a real ~100 KB Python repo (23 files, M-series Mac):
