@@ -35,7 +35,8 @@ MAX_FILE_SIZE = 512_000
 def iter_source_files(root: Path):
     """Yield mappable source files under root, pruning vendored/cache dirs."""
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        dirnames[:] = sorted(
+            d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
         for name in sorted(filenames):
             p = Path(dirpath) / name
             if p.suffix not in SOURCE_EXT:
