@@ -9,6 +9,10 @@
 
 Claude Code reads your files to understand your project — and on every session, that "understanding" phase burns through your usage limits. `projmap` gives Claude a compressed, always-fresh map of your codebase instead: function signatures, docstrings, routes, and constants, without the function bodies. Claude only opens a full file when it actually needs to edit it.
 
+<p align="center">
+  <img src="docs/benchmark.png" alt="Measured token usage on a real 35-file repo: understanding the project drops from 69,688 to 8,292 tokens (8.4x), symbol lookup from 5,841 to 773 (7.6x), single-file overview from 5,841 to 728 (8.0x)" width="92%">
+</p>
+
 ```
 Full file read:      ~2,300 tokens
 projmap skeleton:      ~250 tokens   (~9x compression on production code)
@@ -113,9 +117,7 @@ Everything else — function bodies — is dropped. That's where the compression
 
 ## Performance
 
-![Measured token usage: full file reads vs projmap](docs/benchmark.png)
-
-Measured on a real 35-file Python repo with the `cl100k` tokenizer: understanding
+Measured on a real 35-file Python repo with the `cl100k` tokenizer (chart above): understanding
 the whole project drops from ~70k to ~8k tokens, and typical "where is X?" /
 "what's in this file?" questions are answered for ~700-800 tokens instead of
 opening 5-6k-token files.
