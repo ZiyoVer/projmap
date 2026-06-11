@@ -131,6 +131,25 @@ Measured on a real ~100 KB Python repo (23 files, M-series Mac):
 | Cold index (first call) | ~30 ms |
 | Warm refresh (every later call) | <1 ms |
 
+## Stack it: input + output savings
+
+projmap compresses what Claude **reads** (input tokens). Tools like
+[caveman](https://github.com/JuliusBrussee/caveman) compress what Claude
+**writes** (output tokens) — the two are complementary, and in a typical
+coding session input is by far the bigger share.
+
+Want both in one shot? Add output-brevity rules during setup:
+
+```bash
+projmap init --concise
+```
+
+This appends a short, original "answer with minimum words" section to
+CLAUDE.md alongside the projmap rules (and `projmap uninstall` removes it
+cleanly). For the full caveman experience — benchmarks, multi-agent support,
+the whole 🪨 vibe — install [caveman](https://github.com/JuliusBrussee/caveman)
+itself; it works great alongside projmap.
+
 ## Honest limitations
 
 - **Python is first-class; JS/TS support is beta** (regex-based — top-level symbols and class methods; deeply nested or unusual syntax may be missed). Tree-sitter is planned for exact parsing.

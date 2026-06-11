@@ -25,6 +25,16 @@ CLAUDE_RULES = """
 MARKER = "## projmap rules (auto-generated)"
 LEGACY_MARKER = "## projmap (avtomatik qo'shilgan)"
 
+CONCISE_RULES = """
+## projmap concise output (auto-generated)
+- Answer with the minimum words that keep full technical accuracy.
+- No preamble, no apologies, no restating the question - lead with the fix.
+- Prefer code, file paths and identifiers over prose describing them.
+- One-line explanations unless explicitly asked for depth.
+"""
+
+CONCISE_MARKER = "## projmap concise output (auto-generated)"
+
 
 def _find_repo_root() -> Path:
     """Walk upward looking for .git; fall back to the current directory."""
@@ -66,6 +76,15 @@ def cmd_init(_args) -> int:
         print("[projmap] OK  CLAUDE.md -> context rules appended")
     else:
         print("[projmap] OK  CLAUDE.md -> rules already present")
+
+    # 2b. Optional output-brevity rules (--concise)
+    if getattr(args, "concise", False):
+        existing = claude_md.read_text()
+        if CONCISE_MARKER not in existing:
+            claude_md.write_text(existing.rstrip() + "\n" + CONCISE_RULES)
+            print("[projmap] OK  CLAUDE.md -> concise output rules appended")
+        else:
+            print("[projmap] OK  CLAUDE.md -> concise rules already present")
 
     # 3. .gitignore entry for the cache file
     gi = root / ".gitignore"
@@ -116,7 +135,7 @@ def cmd_uninstall(_args) -> int:
     claude_md = root / "CLAUDE.md"
     if claude_md.exists():
         text = claude_md.read_text()
-        for marker in (MARKER, LEGACY_MARKER):
+        for marker in (MARKER, LEGACY_MARKER, CONCISE_MARKER):
             if marker in text:
                 text = text.split(marker)[0].rstrip() + "\n"
         claude_md.write_text(text)
@@ -145,7 +164,10 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"projmap {__version__}")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("init", help="set up this repo (default, run once)").set_defaults(func=cmd_init)
+    p_init = sub.add_parser("init", help="set up this repo (default, run once)")
+    p_init.add_argument("--concise", action="store_true",
+                        help="also add output-brevity rules to CLAUDE.md (saves output tokens too)")
+    p_init.set_defaults(func=cmd_init)
     sub.add_parser("status", help="check setup and index state").set_defaults(func=cmd_status)
     sub.add_parser("uninstall", help="cleanly remove all changes").set_defaults(func=cmd_uninstall)
     sub.add_parser("map", help="print the compressed project map to stdout").set_defaults(func=cmd_map)

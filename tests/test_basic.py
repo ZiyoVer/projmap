@@ -197,6 +197,24 @@ def test_cli_map_and_find(tmp_path):
     assert "sample.py:" in r.stdout
 
 
+def test_cli_init_concise(tmp_path):
+    make_sample(tmp_path)
+    env = {**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent / "src")}
+    for _ in range(2):
+        r = subprocess.run(
+            [sys.executable, "-m", "projmap.cli", "init", "--concise"],
+            cwd=tmp_path, env=env, capture_output=True, text=True,
+        )
+        assert r.returncode == 0, r.stderr
+    claude_md = (tmp_path / "CLAUDE.md").read_text()
+    assert claude_md.count("projmap concise output") == 1
+    assert claude_md.count("projmap rules (auto-generated)") == 1
+    # uninstall removes the concise section too
+    subprocess.run([sys.executable, "-m", "projmap.cli", "uninstall"],
+                   cwd=tmp_path, env=env, capture_output=True)
+    assert "concise" not in (tmp_path / "CLAUDE.md").read_text()
+
+
 def test_cli_uninstall_cleans_up(tmp_path):
     make_sample(tmp_path)
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent / "src")}
