@@ -45,7 +45,7 @@ def _find_repo_root() -> Path:
     return p
 
 
-def cmd_init(_args) -> int:
+def cmd_init(args) -> int:
     root = _find_repo_root()
     if next(core.iter_source_files(root), None) is None:
         print(f"[projmap] Warning: no Python or JS/TS files found under {root}. "
