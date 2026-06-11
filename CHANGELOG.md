@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-06-11
+
+### Added
+- **One-command install**: `curl -fsSL .../install.sh | sh` — creates an
+  isolated venv, installs the package, links the CLI, and wires everything
+- **`projmap setup`**: global one-shot setup — registers the MCP server in
+  user scope (all projects) and appends rules to `~/.claude/CLAUDE.md`;
+  `--concise` supported, `--remove` undoes everything
+
+### Changed
+- **PyPI distribution renamed to `projmap-mcp`** (the `projmap` name on
+  PyPI belongs to an unrelated cartography package); the CLI command and
+  Python module are still `projmap`
+
 ## 0.4.0 — 2026-06-11
 
 ### Added

@@ -8,6 +8,8 @@ Everything else is automatic: .mcp.json, CLAUDE.md rules, .gitignore.
 """
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -185,6 +187,72 @@ def cmd_notes(args) -> int:
     return 0
 
 
+def _global_claude_md() -> Path:
+    return Path.home() / ".claude" / "CLAUDE.md"
+
+
+def cmd_setup(args) -> int:
+    """One-shot global setup: user-scope MCP server + global CLAUDE.md rules.
+
+    After this, projmap works in EVERY project on this machine — no
+    per-repo `projmap init` needed. (init is still useful to commit a
+    .mcp.json your teammates can pick up.)
+    """
+    if getattr(args, "remove", False):
+        claude = shutil.which("claude")
+        if claude:
+            subprocess.run([claude, "mcp", "remove", "projmap", "-s", "user"],
+                           capture_output=True)
+            print("[projmap] OK  claude mcp -> user-scope server removed")
+        gmd = _global_claude_md()
+        if gmd.exists():
+            text = gmd.read_text()
+            for marker in (MARKER, LEGACY_MARKER, CONCISE_MARKER):
+                if marker in text:
+                    text = text.split(marker)[0].rstrip() + "\n"
+            gmd.write_text(text)
+            print("[projmap] OK  ~/.claude/CLAUDE.md -> rules removed")
+        print("[projmap] Global setup removed.")
+        return 0
+
+    # 1. Register the MCP server in user scope (all projects)
+    claude = shutil.which("claude")
+    if claude:
+        subprocess.run([claude, "mcp", "remove", "projmap", "-s", "user"],
+                       capture_output=True)
+        r = subprocess.run(
+            [claude, "mcp", "add", "projmap", "-s", "user", "--",
+             sys.executable, "-m", "projmap.server"],
+            capture_output=True, text=True)
+        if r.returncode == 0:
+            print("[projmap] OK  claude mcp -> server registered (user scope, all projects)")
+        else:
+            print(f"[projmap] ERROR registering MCP server:\n{r.stderr.strip()}")
+            return 1
+    else:
+        print("[projmap] `claude` CLI not found - register manually:\n"
+              f"  claude mcp add projmap -s user -- {sys.executable} -m projmap.server")
+
+    # 2. Global CLAUDE.md rules (idempotent)
+    gmd = _global_claude_md()
+    gmd.parent.mkdir(parents=True, exist_ok=True)
+    existing = gmd.read_text() if gmd.exists() else ""
+    if MARKER not in existing:
+        gmd.write_text(existing.rstrip() + "\n" + CLAUDE_RULES)
+        print("[projmap] OK  ~/.claude/CLAUDE.md -> context rules appended")
+    else:
+        print("[projmap] OK  ~/.claude/CLAUDE.md -> rules already present")
+    if getattr(args, "concise", False):
+        existing = gmd.read_text()
+        if CONCISE_MARKER not in existing:
+            gmd.write_text(existing.rstrip() + "\n" + CONCISE_RULES)
+            print("[projmap] OK  ~/.claude/CLAUDE.md -> concise output rules appended")
+
+    print("\n[projmap] Done! projmap now works in every project - just start `claude`.\n"
+          "Undo anytime: projmap setup --remove")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="projmap",
@@ -193,6 +261,11 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"projmap {__version__}")
     sub = parser.add_subparsers(dest="command")
+    p_setup = sub.add_parser("setup", help="global one-shot setup: works in all projects")
+    p_setup.add_argument("--concise", action="store_true",
+                         help="also add output-brevity rules (saves output tokens too)")
+    p_setup.add_argument("--remove", action="store_true", help="undo the global setup")
+    p_setup.set_defaults(func=cmd_setup)
     p_init = sub.add_parser("init", help="set up this repo (default, run once)")
     p_init.add_argument("--concise", action="store_true",
                         help="also add output-brevity rules to CLAUDE.md (saves output tokens too)")

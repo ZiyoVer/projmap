@@ -3,8 +3,8 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "projmap"
-version = "0.4.0"
+name = "projmap-mcp"
+version = "0.5.0"
 description = "Zero-config project memory for Claude Code - compressed codebase maps (Python, JS/TS, Go, Rust, Java) that cut token usage 5-10x"
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.0"]

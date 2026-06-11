@@ -1,8 +1,8 @@
 # projmap
 
 [![CI](https://github.com/ZiyoVer/projmap/actions/workflows/ci.yml/badge.svg)](https://github.com/ZiyoVer/projmap/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/projmap)](https://pypi.org/project/projmap/)
-[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/projmap/)
+[![PyPI](https://img.shields.io/pypi/v/projmap-mcp)](https://pypi.org/project/projmap-mcp/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/projmap-mcp/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 **Zero-config project memory for Claude Code. Cut token usage 5-10x without losing quality. Python, JS/TS, Go, Rust, Java.**
@@ -64,13 +64,22 @@ flowchart LR
 
 ## Install
 
+One command, works in **all** your projects:
+
 ```bash
-pip install projmap
-cd your-repo
-projmap init
+curl -fsSL https://raw.githubusercontent.com/ZiyoVer/projmap/main/install.sh | sh
 ```
 
-That's it. Start `claude` in the repo — everything is wired automatically.
+That's it. Start `claude` anywhere — the tools and context rules are wired
+globally (undo anytime with `projmap setup --remove`).
+
+Prefer pip / per-project setup?
+
+```bash
+pip install projmap-mcp
+projmap setup        # global: every project on this machine, or
+cd your-repo && projmap init   # per-repo: commits .mcp.json for your team
+```
 
 ## What `projmap init` does
 

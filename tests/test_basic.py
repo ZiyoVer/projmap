@@ -1,6 +1,7 @@
 """Tests: extractors (Python + JS/TS), cache, symbol search, CLI idempotency."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -414,6 +415,24 @@ def test_cli_init_concise(tmp_path):
     subprocess.run([sys.executable, "-m", "projmap.cli", "uninstall"],
                    cwd=tmp_path, env=env, capture_output=True)
     assert "concise" not in (tmp_path / "CLAUDE.md").read_text()
+
+
+def test_cli_setup_global_rules(tmp_path, monkeypatch):
+    """setup writes global rules even without the claude CLI; --remove undoes."""
+    import argparse as ap
+    from projmap import cli
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert cli.cmd_setup(ap.Namespace(concise=True, remove=False)) == 0
+    gmd = (tmp_path / ".claude" / "CLAUDE.md").read_text()
+    assert "projmap rules (auto-generated)" in gmd
+    assert "projmap concise output" in gmd
+    # idempotent
+    assert cli.cmd_setup(ap.Namespace(concise=True, remove=False)) == 0
+    assert (tmp_path / ".claude" / "CLAUDE.md").read_text().count("projmap rules") == 1
+    # remove
+    assert cli.cmd_setup(ap.Namespace(concise=False, remove=True)) == 0
+    assert "projmap" not in (tmp_path / ".claude" / "CLAUDE.md").read_text()
 
 
 def test_cli_uninstall_cleans_up(tmp_path):
