@@ -37,9 +37,17 @@ CONCISE_MARKER = "## projmap concise output (auto-generated)"
 
 
 def _find_repo_root() -> Path:
-    """Walk upward looking for .git; fall back to the current directory."""
+    """Walk upward looking for .git; fall back to the current directory.
+
+    The home directory is never accepted as an *ancestor* root: if a stray
+    ~/.git exists, walking up from ~/some/project must not silently target
+    the whole home folder. Running directly inside ~ still works.
+    """
     p = Path.cwd()
+    home = Path.home()
     for parent in [p, *p.parents]:
+        if parent == home and p != home:
+            break
         if (parent / ".git").exists():
             return parent
     return p
@@ -47,6 +55,7 @@ def _find_repo_root() -> Path:
 
 def cmd_init(args) -> int:
     root = _find_repo_root()
+    print(f"[projmap] repo root: {root}")
     if next(core.iter_source_files(root), None) is None:
         print(f"[projmap] Warning: no Python or JS/TS files found under {root}. "
               "Run this from your project root.")

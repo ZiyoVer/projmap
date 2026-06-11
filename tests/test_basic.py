@@ -170,6 +170,21 @@ def test_get_file_skeleton_suggests_similar(tmp_path):
 
 # -------------------------------------------------------------------- CLI --
 
+def test_repo_root_never_climbs_to_home(tmp_path, monkeypatch):
+    """A project without .git must not resolve to a home dir that has .git."""
+    from projmap import cli
+    fake_home = tmp_path / "home"
+    project = fake_home / "myproject"
+    project.mkdir(parents=True)
+    (fake_home / ".git").mkdir()
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: fake_home))
+    monkeypatch.chdir(project)
+    assert cli._find_repo_root() == project
+    # but running directly inside home still works
+    monkeypatch.chdir(fake_home)
+    assert cli._find_repo_root() == fake_home
+
+
 def test_cli_init_idempotent(tmp_path):
     make_sample(tmp_path)
     env = {**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent / "src")}
