@@ -116,6 +116,117 @@ def test_js_methods_skip_keywords():
     assert "if" not in names
 
 
+# --------------------------------------------------------- Go/Rust/Java ---
+
+GO_SAMPLE = '''package main
+
+import (
+\t"fmt"
+\t"net/http"
+)
+
+const MaxRetries = 3
+
+type Server struct {
+\tAddr string
+}
+
+func NewServer(addr string) *Server {
+\treturn &Server{Addr: addr}
+}
+
+func (s *Server) Start() error {
+\treturn http.ListenAndServe(s.Addr, nil)
+}
+'''
+
+RUST_SAMPLE = '''use std::collections::HashMap;
+
+pub const MAX_RETRIES: u32 = 3;
+
+pub struct Server {
+    addr: String,
+}
+
+impl Server {
+    pub fn new(addr: String) -> Self {
+        Server { addr }
+    }
+}
+
+pub trait Handler {
+    fn handle(&self) -> bool;
+}
+
+pub async fn run_server(s: Server) -> Result<(), String> {
+    Ok(())
+}
+'''
+
+JAVA_SAMPLE = '''package com.example;
+
+import java.util.List;
+
+public class UserService {
+    public static final int MAX_RETRIES = 3;
+
+    public List<String> findUsers(String query) throws Exception {
+        return List.of(query);
+    }
+
+    private static boolean isValid(String name) {
+        if (name == null) {
+            return false;
+        }
+        return true;
+    }
+}
+'''
+
+
+def test_go_skeleton(tmp_path):
+    f = tmp_path / "server.go"
+    f.write_text(GO_SAMPLE)
+    skel, symbols = core.file_skeleton(f)
+    assert "imports: fmt, net/http" in skel
+    assert "type Server struct" in skel
+    assert "func NewServer(addr string) *Server" in skel
+    kinds = {s["name"]: s["kind"] for s in symbols}
+    assert kinds["NewServer"] == "function"
+    assert kinds["Start"] == "method"
+    assert kinds["Server"] == "type"
+    assert kinds["MaxRetries"] == "const"
+    assert "return" not in skel
+
+
+def test_rust_skeleton(tmp_path):
+    f = tmp_path / "server.rs"
+    f.write_text(RUST_SAMPLE)
+    skel, symbols = core.file_skeleton(f)
+    assert "imports: std::collections::HashMap" in skel
+    assert "pub struct Server" in skel
+    assert "pub async fn run_server(s: Server) -> Result<(), String>" in skel
+    kinds = {s["name"]: s["kind"] for s in symbols}
+    assert kinds["run_server"] == "function"
+    assert kinds["new"] == "method"
+    assert kinds["Handler"] == "trait"
+    assert kinds["MAX_RETRIES"] == "const"
+
+
+def test_java_skeleton(tmp_path):
+    f = tmp_path / "UserService.java"
+    f.write_text(JAVA_SAMPLE)
+    skel, symbols = core.file_skeleton(f)
+    assert "imports: java.util.List" in skel
+    assert "public class UserService" in skel
+    assert "public List<String> findUsers(String query) throws Exception" in skel
+    kinds = {s["name"]: s["kind"] for s in symbols}
+    assert kinds["UserService"] == "class"
+    assert kinds["findUsers"] == "method"
+    assert kinds["MAX_RETRIES"] == "const"
+    assert "if" not in kinds  # control flow is not a method
+
+
 # ------------------------------------------------------------------ cache --
 
 def test_refresh_cache_hit_and_invalidation(tmp_path):
@@ -146,6 +257,33 @@ def test_refresh_drops_deleted_files(tmp_path):
     assert "sample.py" in core.refresh(tmp_path)
     f.unlink()
     assert "sample.py" not in core.refresh(tmp_path)
+
+
+def test_gitignore_is_respected(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, capture_output=True)
+    make_sample(tmp_path)
+    (tmp_path / ".gitignore").write_text("generated.py\n")
+    (tmp_path / "generated.py").write_text("def gen():\n    pass\n")
+    data = core.refresh(tmp_path)
+    assert "sample.py" in data
+    assert "generated.py" not in data
+
+
+def test_build_map_scoped_to_subdir(tmp_path):
+    make_sample(tmp_path)
+    sub = tmp_path / "api"
+    sub.mkdir()
+    (sub / "routes.py").write_text("def route():\n    pass\n")
+    m = core.build_map(tmp_path, "api")
+    assert "api/routes.py" in m
+    assert "sample.py" not in m
+    assert "No source files under" in core.build_map(tmp_path, "nope")
+
+
+def test_build_map_header_has_token_estimate(tmp_path):
+    make_sample(tmp_path)
+    m = core.build_map(tmp_path)
+    assert "tokens vs ~" in m.splitlines()[0]
 
 
 def test_build_map_is_size_capped(tmp_path, monkeypatch):

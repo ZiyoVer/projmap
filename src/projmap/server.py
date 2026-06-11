@@ -29,15 +29,19 @@ _READONLY = {
 
 
 @mcp.tool(name="projmap_get_map", annotations={"title": "Get Project Map", **_READONLY})
-async def projmap_get_map() -> str:
-    """Return a compressed map of the whole project: per file, the imports,
+async def projmap_get_map(path: str = "") -> str:
+    """Return a compressed map of the project: per file, the imports,
     constants, class/function signatures and docstring summaries.
     Use this at the start of a session INSTEAD of reading files in full.
+
+    Args:
+        path: optional subdirectory (relative to repo root) to scope the
+            map to — use it in monorepos or when the full map is truncated
 
     Returns:
         str: Markdown project map (~5-10x smaller than the full source)
     """
-    return core.build_map(ROOT)
+    return core.build_map(ROOT, path)
 
 
 class FileSkeletonInput(BaseModel):

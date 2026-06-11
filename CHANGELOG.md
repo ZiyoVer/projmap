@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 — 2026-06-11
+
+### Added
+- **Go, Rust and Java support (beta)**: funcs/methods with receivers, types,
+  structs, enums, traits, impls, classes, records, constants, imports
+- **Scoped maps**: `projmap_get_map(path="src/api")` and
+  `projmap map <path>` limit the map to one directory (monorepo-friendly)
+- Map header now shows a token estimate: `~X tokens vs ~Y full`
+
+### Changed
+- File discovery uses `git ls-files` when available — `.gitignore` is
+  honored exactly; os.walk fallback for non-git projects
+- Generated `*_pb2.py` files are skipped
+
 ## 0.3.0 — 2026-06-11
 
 ### Added

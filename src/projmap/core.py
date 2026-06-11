@@ -1,7 +1,9 @@
 """projmap core — extractors, cache, and project map building.
 
 No AI calls, no network. Python files are parsed with the stdlib ``ast``
-module; JS/TS files use a conservative line-based extractor (beta).
+module; JS/TS, Go, Rust and Java use a conservative line-based extractor
+(beta). File discovery respects .gitignore via ``git ls-files`` when the
+project is a git repository, with an os.walk fallback otherwise.
 
 The cache is refreshed lazily: on every call each source file is stat()'d,
 and only files whose mtime or size changed are re-parsed. Unchanged files
@@ -15,20 +17,24 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 CACHE_NAME = ".projmap_cache.json"
+NOTES_NAME = ".projmap_notes.md"
 
 # Directories that never contain first-party source worth mapping.
 SKIP_DIRS = {
     "__pycache__", ".git", ".hg", ".svn", ".venv", "venv", "env",
     "node_modules", ".tox", ".nox", ".mypy_cache", ".pytest_cache",
     ".ruff_cache", "build", "dist", ".eggs", "site-packages",
-    ".idea", ".vscode", "coverage", ".next", ".nuxt", "target",
+    ".idea", ".vscode", "coverage", ".next", ".nuxt", "target", "vendor",
 }
 
 PY_EXT = {".py"}
 JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
-SOURCE_EXT = PY_EXT | JS_EXT
+GO_EXT = {".go"}
+RUST_EXT = {".rs"}
+JAVA_EXT = {".java"}
+SOURCE_EXT = PY_EXT | JS_EXT | GO_EXT | RUST_EXT | JAVA_EXT
 
 # Minified bundles and generated megafiles are noise; skip them.
 MAX_FILE_SIZE = 512_000
@@ -40,16 +46,55 @@ MAX_FILES = 2000
 MAX_MAP_CHARS = 120_000
 
 
+def _is_noise(name: str) -> bool:
+    return name.endswith((".min.js", ".bundle.js")) or name.endswith("_pb2.py")
+
+
+def _git_source_files(root: Path):
+    """File list via git (respects .gitignore). None if git is unusable."""
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=root, capture_output=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    files = []
+    for rel in out.stdout.decode("utf-8", "replace").split("\0"):
+        if not rel:
+            continue
+        p = root / rel
+        if p.suffix not in SOURCE_EXT or _is_noise(p.name):
+            continue
+        parts = Path(rel).parts[:-1]
+        if any(d in SKIP_DIRS or d.startswith(".") for d in parts):
+            continue
+        try:
+            if p.stat().st_size > MAX_FILE_SIZE:
+                continue
+        except OSError:
+            continue
+        files.append(p)
+    return sorted(files)
+
+
 def iter_source_files(root: Path):
-    """Yield mappable source files under root, pruning vendored/cache dirs."""
+    """Yield mappable source files under root.
+
+    Prefers `git ls-files` (so .gitignore is honored exactly); falls back
+    to an os.walk that prunes vendored/cache/hidden directories.
+    """
+    git_files = _git_source_files(root)
+    if git_files is not None:
+        yield from git_files
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(
             d for d in dirnames if d not in SKIP_DIRS and not d.startswith("."))
         for name in sorted(filenames):
             p = Path(dirpath) / name
-            if p.suffix not in SOURCE_EXT:
-                continue
-            if name.endswith((".min.js", ".bundle.js")):
+            if p.suffix not in SOURCE_EXT or _is_noise(name):
                 continue
             try:
                 if p.stat().st_size > MAX_FILE_SIZE:
@@ -141,64 +186,124 @@ def python_skeleton(source: str):
     return "\n".join(lines), symbols
 
 
-# ----------------------------------------------------------------- JS/TS ---
+# ------------------------------------------------- regex-based languages ---
+# One generic line engine; per-language pattern tables. Each entry is
+# (kind, compiled_regex_with_named_group_name, excluded_names_or_None).
 
-_JS_LINE_PATTERNS = [
+_CONTROL_KEYWORDS = {
+    "if", "for", "while", "switch", "catch", "return", "function", "fn",
+    "constructor", "super", "new", "typeof", "await", "else", "do", "match",
+    "try", "throw", "assert", "synchronized",
+}
+
+_JS_PATTERNS = [
     ("function", re.compile(
         r"^(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s*\*?\s*"
-        r"(?P<name>[A-Za-z_$][\w$]*)\s*\(")),
+        r"(?P<name>[A-Za-z_$][\w$]*)\s*\("), None),
     ("function", re.compile(
         r"^(?:export\s+)?(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)"
-        r"\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::\s*[^=]+)?=>")),
+        r"\s*(?::[^=]+)?=\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::\s*[^=]+)?=>"), None),
     ("class", re.compile(
-        r"^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+(?P<name>[A-Za-z_$][\w$]*)")),
-    ("interface", re.compile(r"^(?:export\s+)?interface\s+(?P<name>[A-Za-z_$][\w$]*)")),
-    ("type", re.compile(r"^(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*=")),
-    ("enum", re.compile(r"^(?:export\s+)?(?:const\s+)?enum\s+(?P<name>[A-Za-z_$][\w$]*)")),
-    ("const", re.compile(r"^(?:export\s+)?const\s+(?P<name>[A-Z_][A-Z0-9_]+)\s*=")),
+        r"^(?:export\s+(?:default\s+)?)?(?:abstract\s+)?class\s+(?P<name>[A-Za-z_$][\w$]*)"), None),
+    ("interface", re.compile(r"^(?:export\s+)?interface\s+(?P<name>[A-Za-z_$][\w$]*)"), None),
+    ("type", re.compile(r"^(?:export\s+)?type\s+(?P<name>[A-Za-z_$][\w$]*)\s*="), None),
+    ("enum", re.compile(r"^(?:export\s+)?(?:const\s+)?enum\s+(?P<name>[A-Za-z_$][\w$]*)"), None),
+    ("const", re.compile(r"^(?:export\s+)?const\s+(?P<name>[A-Z_][A-Z0-9_]+)\s*="), None),
+    ("method", re.compile(
+        r"^\s{2,6}(?:public\s+|private\s+|protected\s+|static\s+|async\s+|get\s+|set\s+)*"
+        r"(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{"), _CONTROL_KEYWORDS),
 ]
-_JS_METHOD = re.compile(
-    r"^\s{2,6}(?:public\s+|private\s+|protected\s+|static\s+|async\s+|get\s+|set\s+)*"
-    r"(?P<name>[A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{")
-_JS_KEYWORDS = {
-    "if", "for", "while", "switch", "catch", "return", "function",
-    "constructor", "super", "new", "typeof", "await", "else", "do",
-}
 _JS_IMPORT = re.compile(r"""^import\s+(?:.*?from\s+)?['"](?P<mod>[^'"]+)['"]""")
+
+_GO_PATTERNS = [
+    ("method", re.compile(r"^func\s+\([^)]*\)\s+(?P<name>\w+)\s*\("), None),
+    ("function", re.compile(r"^func\s+(?P<name>\w+)\s*\("), None),
+    ("type", re.compile(r"^type\s+(?P<name>\w+)\s+(?:struct|interface|func|\w)"), None),
+    ("const", re.compile(r"^(?:const|var)\s+(?P<name>\w+)\b[^(]"), None),
+]
+_GO_IMPORT = re.compile(r'^import\s+(?:\w+\s+)?"(?P<mod>[^"]+)"')
+
+_RUST_PATTERNS = [
+    ("function", re.compile(
+        r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(?P<name>\w+)"), None),
+    ("method", re.compile(
+        r"^\s{2,}(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?fn\s+(?P<name>\w+)"), None),
+    ("struct", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?struct\s+(?P<name>\w+)"), None),
+    ("enum", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?enum\s+(?P<name>\w+)"), None),
+    ("trait", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?trait\s+(?P<name>\w+)"), None),
+    ("impl", re.compile(r"^impl(?:\s*<[^>]*>)?\s+(?P<name>[\w:]+)"), None),
+    ("type", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?type\s+(?P<name>\w+)\s*="), None),
+    ("const", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:const|static)\s+(?P<name>\w+)\s*:"), None),
+    ("mod", re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(?P<name>\w+)\s*[;{]"), None),
+]
+_RUST_IMPORT = re.compile(r"^use\s+(?P<mod>[\w:]+)")
+
+_JAVA_PATTERNS = [
+    ("class", re.compile(
+        r"^\s*(?:(?:public|private|protected|final|abstract|static)\s+)*"
+        r"(?:class|interface|enum|record)\s+(?P<name>\w+)"), None),
+    ("const", re.compile(
+        r"^\s+(?:(?:public|private|protected)\s+)?static\s+final\s+[\w<>\[\].]+\s+"
+        r"(?P<name>[A-Z_][A-Z0-9_]*)\s*="), None),
+    ("method", re.compile(
+        r"^\s{2,}(?:(?:public|private|protected|static|final|abstract|synchronized|native|default)\s+)+"
+        r"[\w<>\[\],.?\s]+?\s+(?P<name>\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s.]+)?\s*\{"),
+        _CONTROL_KEYWORDS),
+]
+_JAVA_IMPORT = re.compile(r"^import\s+(?:static\s+)?(?P<mod>[\w.]+(?:\.\*)?);")
+
+_LANG_SPECS = {
+    **{ext: (_JS_PATTERNS, _JS_IMPORT, False) for ext in JS_EXT},
+    **{ext: (_GO_PATTERNS, _GO_IMPORT, True) for ext in GO_EXT},
+    **{ext: (_RUST_PATTERNS, _RUST_IMPORT, False) for ext in RUST_EXT},
+    **{ext: (_JAVA_PATTERNS, _JAVA_IMPORT, False) for ext in JAVA_EXT},
+}
+
+
+def regex_skeleton(source: str, patterns, import_pat, go_import_blocks=False):
+    """Generic line-based extractor for non-Python languages (beta)."""
+    lines = []
+    symbols = []
+    imports = []
+    in_go_imports = False
+    for lineno, raw in enumerate(source.splitlines(), 1):
+        line = raw.rstrip()
+        if go_import_blocks:
+            if line.startswith("import ("):
+                in_go_imports = True
+                continue
+            if in_go_imports:
+                if line.strip().startswith(")"):
+                    in_go_imports = False
+                else:
+                    m = re.search(r'"([^"]+)"', line)
+                    if m:
+                        imports.append(m.group(1))
+                continue
+        m = import_pat.match(line)
+        if m:
+            imports.append(m.group("mod"))
+            continue
+        for kind, pat, excluded in patterns:
+            m = pat.match(line)
+            if m:
+                name = m.group("name")
+                if excluded and name in excluded:
+                    break
+                indent = "  " if line[:1].isspace() else ""
+                sig = indent + line.strip().rstrip("{").strip()
+                lines.append(sig)
+                symbols.append({"name": name, "kind": kind,
+                                "line": lineno, "sig": sig.strip()})
+                break
+    if imports:
+        lines.insert(0, f"imports: {', '.join(sorted(set(imports)))}")
+    return "\n".join(lines), symbols
 
 
 def js_skeleton(source: str):
     """Extract (skeleton_text, symbols) from JS/TS source (beta, regex-based)."""
-    lines = []
-    symbols = []
-    imports = []
-    for lineno, raw in enumerate(source.splitlines(), 1):
-        line = raw.rstrip()
-        m = _JS_IMPORT.match(line)
-        if m:
-            imports.append(m.group("mod"))
-            continue
-        matched = False
-        for kind, pat in _JS_LINE_PATTERNS:
-            m = pat.match(line)
-            if m:
-                sig = line.strip().rstrip("{").strip()
-                lines.append(sig)
-                symbols.append({"name": m.group("name"), "kind": kind,
-                                "line": lineno, "sig": sig})
-                matched = True
-                break
-        if matched:
-            continue
-        m = _JS_METHOD.match(raw)
-        if m and m.group("name") not in _JS_KEYWORDS:
-            sig = "  " + raw.strip().rstrip("{").strip()
-            lines.append(sig)
-            symbols.append({"name": m.group("name"), "kind": "method",
-                            "line": lineno, "sig": sig.strip()})
-    if imports:
-        lines.insert(0, f"imports: {', '.join(sorted(set(imports)))}")
-    return "\n".join(lines), symbols
+    return regex_skeleton(source, _JS_PATTERNS, _JS_IMPORT)
 
 
 # ----------------------------------------------------------------- cache ---
@@ -214,7 +319,8 @@ def file_skeleton(path: Path):
             return python_skeleton(source)
         except SyntaxError:
             return "[parse error]", []
-    return js_skeleton(source)
+    patterns, import_pat, go_blocks = _LANG_SPECS[path.suffix]
+    return regex_skeleton(source, patterns, import_pat, go_blocks)
 
 
 def _load_cache(root: Path) -> dict:
@@ -265,22 +371,43 @@ def refresh(root: Path) -> dict:
     return fresh
 
 
-def build_map(root: Path) -> str:
-    """Render the compressed project map as Markdown, size-capped."""
+def build_map(root: Path, subpath: str = "") -> str:
+    """Render the compressed project map as Markdown, size-capped.
+
+    subpath limits the map to one directory (relative to the repo root) —
+    useful in monorepos and very large projects.
+    """
     root = root.resolve()
     data = refresh(root)
-    out = [f"# PROJECT MAP: {root.name} ({len(data)} files)\n"]
+    scope = subpath.strip().strip("/").replace("\\", "/")
+    if scope:
+        data = {rel: info for rel, info in data.items()
+                if rel == scope or rel.startswith(scope + "/")}
+        if not data:
+            return (f"No source files under '{subpath}'. "
+                    "Call projmap_get_map without a path for the full list.")
+
+    sections = []
+    for rel, info in data.items():
+        sections.append(f"## {rel}\n{info['skeleton']}\n" if info["skeleton"]
+                        else f"## {rel}\n(no top-level symbols)\n")
+
+    full_bytes = sum(info.get("size", 0) for info in data.values())
+    map_chars = sum(len(s) + 1 for s in sections)
+    title = f"{root.name}/{scope}" if scope else root.name
+    header = (f"# PROJECT MAP: {title} ({len(data)} files, "
+              f"~{max(map_chars, 1) // 4:,} tokens vs ~{full_bytes // 4:,} full)\n")
+    out = [header]
     if root == Path.home():
         out.insert(0, "WARNING: this maps your entire home directory. "
                       "Start your session inside a project folder for useful results.\n")
     size = sum(len(s) for s in out)
     shown = 0
-    for rel, info in data.items():
-        section = (f"## {rel}\n{info['skeleton']}\n" if info["skeleton"]
-                   else f"## {rel}\n(no top-level symbols)\n")
+    for section in sections:
         if size + len(section) > MAX_MAP_CHARS:
             out.append(f"\n... map truncated: showing {shown} of {len(data)} files. "
-                       "Use projmap_file_skeleton for specific files or "
+                       "Use projmap_get_map with a subdirectory path, "
+                       "projmap_file_skeleton for specific files, or "
                        "projmap_find_symbol to locate symbols.")
             break
         out.append(section)
@@ -304,7 +431,7 @@ def get_file_skeleton(root: Path, rel_path: str) -> str:
     return f"File not found: {rel_path}.{hint} Use projmap_get_map for the full list."
 
 
-NOTES_NAME = ".projmap_notes.md"
+NOTES_HEADER = "# Project notes (projmap memory)\n\n"
 
 
 def read_notes(root: Path) -> str:
@@ -322,7 +449,7 @@ def add_note(root: Path, text: str) -> str:
     if not text:
         return "Empty note ignored."
     p = root / NOTES_NAME
-    header = "" if p.exists() else "# Project notes (projmap memory)\n\n"
+    header = "" if p.exists() else NOTES_HEADER
     line = f"- [{date.today().isoformat()}] {text}\n"
     with p.open("a", encoding="utf-8") as f:
         f.write(header + line)

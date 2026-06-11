@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/projmap/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Zero-config project memory for Claude Code. Cut token usage 5-10x without losing quality. Python + JS/TS.**
+**Zero-config project memory for Claude Code. Cut token usage 5-10x without losing quality. Python, JS/TS, Go, Rust, Java.**
 
 Claude Code reads your files to understand your project — and on every session, that "understanding" phase burns through your usage limits. `projmap` gives Claude a compressed, always-fresh map of your codebase instead: function signatures, docstrings, routes, and constants, without the function bodies. Claude only opens a full file when it actually needs to edit it.
 
@@ -114,7 +114,7 @@ LLM, paste it into a PR description, or grep it.
 
 ## How it works
 
-Pure Python `ast` parsing for Python and a conservative line-based extractor for JS/TS — no AI calls, no network, no cost. The extractor keeps:
+Pure Python `ast` parsing for Python and a conservative line-based extractor for JS/TS, Go, Rust and Java — no AI calls, no network, no cost. File discovery uses `git ls-files`, so `.gitignore` is honored exactly (generated and vendored files never pollute the map). The extractor keeps:
 
 - module docstrings and imports
 - `UPPERCASE` constants with values
@@ -122,6 +122,12 @@ Pure Python `ast` parsing for Python and a conservative line-based extractor for
 - **full** function/method signatures: type annotations, default values, `*args/**kwargs`, return types, decorators (FastAPI routes stay visible)
 - first line of every docstring
 - for JS/TS: imports, exported functions, arrow functions, classes and methods, interfaces, types, enums
+- for Go: funcs and methods (with receivers), types, consts, import blocks
+- for Rust: fns, structs, enums, traits, impls, consts, mods
+- for Java: classes/interfaces/records, methods, static-final constants
+
+In monorepos or very large projects, scope the map to one directory:
+`projmap_get_map(path="services/api")` or `projmap map services/api`.
 
 Everything else — function bodies — is dropped. That's where the compression comes from, and why quality doesn't suffer: signatures and docstrings are what Claude needs for *navigation and planning*; bodies are only needed for *editing*, and Claude still opens the real file for that.
 
@@ -162,7 +168,7 @@ itself; it works great alongside projmap.
 
 ## Honest limitations
 
-- **Python is first-class; JS/TS support is beta** (regex-based — top-level symbols and class methods; deeply nested or unusual syntax may be missed). Tree-sitter is planned for exact parsing.
+- **Python is first-class; JS/TS, Go, Rust and Java support is beta** (regex-based — top-level symbols and class methods; deeply nested or unusual syntax may be missed). Tree-sitter is planned for exact parsing.
 - Savings apply to the *understanding* phase. When editing, Claude reads the full file — that's correct behavior, not a bug.
 - Compression ratio depends on your code: docstring-rich production code compresses 6-12x; thin stub code closer to 2x.
 - Write docstrings. The map is only as informative as your first docstring lines.

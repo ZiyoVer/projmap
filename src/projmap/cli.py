@@ -157,9 +157,9 @@ def cmd_uninstall(_args) -> int:
     return 0
 
 
-def cmd_map(_args) -> int:
+def cmd_map(args) -> int:
     """Print the compressed project map to stdout (works with any tool)."""
-    print(core.build_map(_find_repo_root()))
+    print(core.build_map(_find_repo_root(), getattr(args, "path", "") or ""))
     return 0
 
 
@@ -199,7 +199,9 @@ def main(argv=None) -> int:
     p_init.set_defaults(func=cmd_init)
     sub.add_parser("status", help="check setup and index state").set_defaults(func=cmd_status)
     sub.add_parser("uninstall", help="cleanly remove all changes").set_defaults(func=cmd_uninstall)
-    sub.add_parser("map", help="print the compressed project map to stdout").set_defaults(func=cmd_map)
+    p_map = sub.add_parser("map", help="print the compressed project map to stdout")
+    p_map.add_argument("path", nargs="?", default="", help="optional subdirectory to scope the map to")
+    p_map.set_defaults(func=cmd_map)
     p_find = sub.add_parser("find", help="find where a symbol is defined")
     p_find.add_argument("name", help="function/class/constant name (partial match)")
     p_find.set_defaults(func=cmd_find)
