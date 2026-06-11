@@ -31,6 +31,12 @@ SOURCE_EXT = PY_EXT | JS_EXT
 # Minified bundles and generated megafiles are noise; skip them.
 MAX_FILE_SIZE = 512_000
 
+# Safety rails for pathological roots (e.g. a whole home directory):
+# index at most this many files, and never let the rendered map exceed
+# this many characters — MCP clients kill oversized stdio messages.
+MAX_FILES = 2000
+MAX_MAP_CHARS = 120_000
+
 
 def iter_source_files(root: Path):
     """Yield mappable source files under root, pruning vendored/cache dirs."""
@@ -231,7 +237,9 @@ def refresh(root: Path) -> dict:
     cache = _load_cache(root)
     fresh = {}
     dirty = False
-    for f in iter_source_files(root):
+    for i, f in enumerate(iter_source_files(root)):
+        if i >= MAX_FILES:
+            break
         rel = f.relative_to(root).as_posix()
         try:
             st = f.stat()
@@ -256,14 +264,29 @@ def refresh(root: Path) -> dict:
 
 
 def build_map(root: Path) -> str:
-    """Render the full compressed project map as Markdown."""
+    """Render the compressed project map as Markdown, size-capped."""
+    root = root.resolve()
     data = refresh(root)
     out = [f"# PROJECT MAP: {root.name} ({len(data)} files)\n"]
+    if root == Path.home():
+        out.insert(0, "WARNING: this maps your entire home directory. "
+                      "Start your session inside a project folder for useful results.\n")
+    size = sum(len(s) for s in out)
+    shown = 0
     for rel, info in data.items():
-        if info["skeleton"]:
-            out.append(f"## {rel}\n{info['skeleton']}\n")
-        else:
-            out.append(f"## {rel}\n(no top-level symbols)\n")
+        section = (f"## {rel}\n{info['skeleton']}\n" if info["skeleton"]
+                   else f"## {rel}\n(no top-level symbols)\n")
+        if size + len(section) > MAX_MAP_CHARS:
+            out.append(f"\n... map truncated: showing {shown} of {len(data)} files. "
+                       "Use projmap_file_skeleton for specific files or "
+                       "projmap_find_symbol to locate symbols.")
+            break
+        out.append(section)
+        size += len(section) + 1
+        shown += 1
+    if len(data) >= MAX_FILES:
+        out.append(f"\nNote: file cap reached ({MAX_FILES}); only the first "
+                   f"{MAX_FILES} files (sorted) are indexed.")
     return "\n".join(out)
 
 

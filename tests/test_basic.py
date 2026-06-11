@@ -148,6 +148,23 @@ def test_refresh_drops_deleted_files(tmp_path):
     assert "sample.py" not in core.refresh(tmp_path)
 
 
+def test_build_map_is_size_capped(tmp_path, monkeypatch):
+    for i in range(30):
+        (tmp_path / f"mod_{i:02d}.py").write_text(PY_SAMPLE)
+    monkeypatch.setattr(core, "MAX_MAP_CHARS", 2000)
+    m = core.build_map(tmp_path)
+    assert len(m) < 3000
+    assert "map truncated" in m
+    assert "projmap_file_skeleton" in m
+
+
+def test_refresh_respects_file_cap(tmp_path, monkeypatch):
+    for i in range(10):
+        (tmp_path / f"mod_{i:02d}.py").write_text("X = 1\n")
+    monkeypatch.setattr(core, "MAX_FILES", 4)
+    assert len(core.refresh(tmp_path)) == 4
+
+
 # ----------------------------------------------------------------- lookup --
 
 def test_find_symbol_returns_file_and_line(tmp_path):
