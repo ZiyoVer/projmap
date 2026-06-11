@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 — 2026-06-11
+
+### Added
+- **Project memory**: `projmap_get_notes` / `projmap_add_note` MCP tools and
+  `projmap notes` CLI — durable decisions and gotchas persisted in
+  `.projmap_notes.md` across sessions (original implementation)
+- **Change tracking**: `projmap_changed_files` MCP tool and `projmap changes`
+  CLI — skeletons of git-modified/untracked files only, for cheap
+  mid-session re-sync
+- CLAUDE.md rules teach Claude to read notes at session start, re-sync via
+  changed files, and save durable facts
+
+### Fixed
+- `projmap_get_map` output is now size-capped (120k chars) with a truncation
+  note — a session opened in a huge directory previously produced a >16MB
+  response that MCP clients reject
+- Indexing stops at 2000 files; mapping a home directory adds a warning
+- Repo root detection no longer climbs to an ancestor home directory that
+  happens to contain `.git`; `init` prints the resolved root
+
 ## 0.2.0 — 2026-06-10
 
 ### Added

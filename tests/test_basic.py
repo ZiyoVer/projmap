@@ -185,6 +185,37 @@ def test_get_file_skeleton_suggests_similar(tmp_path):
     assert "Similar files: sample.py" in out
 
 
+# ----------------------------------------------------------------- memory --
+
+def test_notes_roundtrip(tmp_path):
+    assert "no project notes yet" in core.read_notes(tmp_path)
+    out = core.add_note(tmp_path, "  Auth uses   JWT tokens  ")
+    assert out == "Saved: Auth uses JWT tokens"
+    notes = core.read_notes(tmp_path)
+    assert "Auth uses JWT tokens" in notes
+    assert notes.startswith("# Project notes")
+    core.add_note(tmp_path, "DB is Postgres")
+    assert core.read_notes(tmp_path).count("- [") == 2
+
+
+def test_changed_files_map(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, capture_output=True)
+    f = make_sample(tmp_path)
+    out = core.changed_files_map(tmp_path)
+    assert "sample.py" in out and "def hello" in out
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "x"], cwd=tmp_path, capture_output=True)
+    assert "No modified or untracked" in core.changed_files_map(tmp_path)
+    f.write_text(PY_SAMPLE + "\ndef extra():\n    pass\n")
+    assert "def extra()" in core.changed_files_map(tmp_path)
+
+
+def test_changed_files_without_git(tmp_path):
+    make_sample(tmp_path)
+    assert "Not a git repository" in core.changed_files_map(tmp_path)
+
+
 # -------------------------------------------------------------------- CLI --
 
 def test_repo_root_never_climbs_to_home(tmp_path, monkeypatch):

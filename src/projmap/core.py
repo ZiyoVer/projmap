@@ -11,6 +11,8 @@ import ast
 import json
 import os
 import re
+import subprocess
+from datetime import date
 from pathlib import Path
 
 CACHE_VERSION = 2
@@ -300,6 +302,68 @@ def get_file_skeleton(root: Path, rel_path: str) -> str:
     similar = [k for k in data if basename and basename in k]
     hint = f" Similar files: {', '.join(similar[:5])}." if similar else ""
     return f"File not found: {rel_path}.{hint} Use projmap_get_map for the full list."
+
+
+NOTES_NAME = ".projmap_notes.md"
+
+
+def read_notes(root: Path) -> str:
+    """Persistent project memory: notes saved by Claude across sessions."""
+    p = root / NOTES_NAME
+    if not p.exists():
+        return ("(no project notes yet - save durable decisions and gotchas "
+                "with projmap_add_note)")
+    return p.read_text(encoding="utf-8", errors="replace")
+
+
+def add_note(root: Path, text: str) -> str:
+    """Append one dated note to the project memory file."""
+    text = " ".join(text.split())
+    if not text:
+        return "Empty note ignored."
+    p = root / NOTES_NAME
+    header = "" if p.exists() else "# Project notes (projmap memory)\n\n"
+    line = f"- [{date.today().isoformat()}] {text}\n"
+    with p.open("a", encoding="utf-8") as f:
+        f.write(header + line)
+    return f"Saved: {text}"
+
+
+def changed_files_map(root: Path) -> str:
+    """Skeletons of files that are modified/untracked according to git.
+
+    Lets a long session re-sync cheaply: instead of re-reading the whole
+    map, Claude asks only for what changed.
+    """
+    try:
+        out = subprocess.run(["git", "status", "--porcelain"], cwd=root,
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return "git is not available - change tracking needs git."
+    if out.returncode != 0:
+        return "Not a git repository - change tracking needs git."
+    rels = []
+    for raw in out.stdout.splitlines():
+        rel = raw[3:].strip().strip('"')
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[1].strip().strip('"')
+        if Path(rel).suffix in SOURCE_EXT:
+            rels.append(rel)
+    if not rels:
+        return "No modified or untracked source files."
+    data = refresh(root)
+    parts = [f"# CHANGED SOURCE FILES ({len(rels)})\n"]
+    size = 0
+    for rel in rels:
+        info = data.get(rel)
+        section = (f"## {rel}\n{info['skeleton']}\n" if info and info["skeleton"]
+                   else f"## {rel}\n(no top-level symbols or not indexed)\n")
+        size += len(section)
+        if size > MAX_MAP_CHARS:
+            parts.append("\n... truncated.")
+            break
+        parts.append(section)
+    return "\n".join(parts)
 
 
 def find_symbol(root: Path, name: str) -> str:

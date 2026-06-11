@@ -15,11 +15,15 @@ from projmap import __version__, core
 
 CLAUDE_RULES = """
 ## projmap rules (auto-generated)
-- At session start, call the projmap_get_map tool BEFORE opening any files.
+- At session start, call projmap_get_map and projmap_get_notes BEFORE
+  opening any files.
 - For "where is function/class X" questions, use projmap_find_symbol.
 - To learn what a file contains, try projmap_file_skeleton first; open the
   full file only when you need to edit it.
-- The map refreshes itself after edits — no need to re-trigger anything.
+- After making edits, use projmap_changed_files to re-sync instead of
+  re-reading files; the map refreshes itself automatically.
+- When you learn a durable fact about this project (architecture decision,
+  gotcha, convention), save it with projmap_add_note.
 """
 
 MARKER = "## projmap rules (auto-generated)"
@@ -165,6 +169,22 @@ def cmd_find(args) -> int:
     return 0
 
 
+def cmd_changes(_args) -> int:
+    """Print skeletons of git-modified/untracked source files."""
+    print(core.changed_files_map(_find_repo_root()))
+    return 0
+
+
+def cmd_notes(args) -> int:
+    """Show project notes, or add one: projmap notes "Auth uses JWT" """
+    root = _find_repo_root()
+    if args.text:
+        print(core.add_note(root, " ".join(args.text)))
+    else:
+        print(core.read_notes(root))
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="projmap",
@@ -183,6 +203,10 @@ def main(argv=None) -> int:
     p_find = sub.add_parser("find", help="find where a symbol is defined")
     p_find.add_argument("name", help="function/class/constant name (partial match)")
     p_find.set_defaults(func=cmd_find)
+    sub.add_parser("changes", help="skeletons of git-modified/untracked files").set_defaults(func=cmd_changes)
+    p_notes = sub.add_parser("notes", help="show project notes, or add one with text")
+    p_notes.add_argument("text", nargs="*", help="note text to save (omit to show notes)")
+    p_notes.set_defaults(func=cmd_notes)
 
     args = parser.parse_args(argv)
     if args.command is None:

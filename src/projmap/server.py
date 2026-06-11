@@ -80,5 +80,57 @@ async def projmap_find_symbol(params: FindSymbolInput) -> str:
     return core.find_symbol(ROOT, params.name)
 
 
+@mcp.tool(name="projmap_changed_files", annotations={"title": "Skeletons of Changed Files", **_READONLY})
+async def projmap_changed_files() -> str:
+    """Return skeletons of git-modified/untracked source files only.
+    Use this mid-session to re-sync after edits instead of re-reading
+    the whole map or full files.
+
+    Returns:
+        str: Markdown skeletons of changed files, or a note if none/no git
+    """
+    return core.changed_files_map(ROOT)
+
+
+@mcp.tool(name="projmap_get_notes", annotations={"title": "Get Project Notes (Memory)", **_READONLY})
+async def projmap_get_notes() -> str:
+    """Persistent project memory: decisions, gotchas and conventions saved
+    in previous sessions. Read this at session start together with the map.
+
+    Returns:
+        str: The project notes file, or a hint that none exist yet
+    """
+    return core.read_notes(ROOT)
+
+
+class AddNoteInput(BaseModel):
+    """Input for projmap_add_note."""
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    text: str = Field(..., description="One durable fact, decision or gotcha about this project (single line)", min_length=3)
+
+
+@mcp.tool(
+    name="projmap_add_note",
+    annotations={
+        "title": "Save Project Note (Memory)",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+async def projmap_add_note(params: AddNoteInput) -> str:
+    """Save a durable fact about this project for future sessions
+    (architecture decisions, gotchas, conventions - not session chatter).
+
+    Args:
+        params: text - the note to persist
+
+    Returns:
+        str: Confirmation with the saved text
+    """
+    return core.add_note(ROOT, params.text)
+
+
 if __name__ == "__main__":
     mcp.run(transport="stdio")

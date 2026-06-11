@@ -89,6 +89,14 @@ No daemon, no background process, no API key. The map refreshes lazily: on every
 | `projmap_get_map` | Compressed map of the whole project |
 | `projmap_file_skeleton` | Skeleton of a single file (signatures + docstrings) |
 | `projmap_find_symbol` | "Where is function X?" — answered with `path:line`, no files opened |
+| `projmap_changed_files` | Skeletons of git-modified files only — cheap mid-session re-sync |
+| `projmap_get_notes` | Persistent project memory, read at session start |
+| `projmap_add_note` | Save a durable decision/gotcha for future sessions |
+
+Together these cover the whole token-heavy part of a session: cheap project
+understanding (map), cheap navigation (symbols, skeletons), cheap re-sync
+after edits (changed files), and memory that survives between sessions
+(notes in `.projmap_notes.md` — commit it to share team knowledge).
 
 ## Other commands
 
@@ -96,6 +104,8 @@ No daemon, no background process, no API key. The map refreshes lazily: on every
 projmap status        # check setup and index state
 projmap map           # print the map to stdout (pipe it anywhere)
 projmap find <name>   # find a symbol from the terminal -> path:line
+projmap changes       # skeletons of git-modified/untracked files
+projmap notes [text]  # show project notes, or add one
 projmap uninstall     # clean removal of all changes
 ```
 
